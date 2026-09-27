@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Luxor Net Key - Demo</title>
+<style>
+  :root{ --bg:#0b0f17; --panel:#131a26; --line:#243044; --txt:#e8eef7; --dim:#8ea0b8; --accent:#5db0ff; --ok:#39d98a; --bad:#ff6b6b; color-scheme:dark; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif;padding:24px}
+  .wrap{max-width:680px;margin:0 auto}
+  h1{font-size:24px;margin:0 0 4px} .sub{color:var(--dim);margin:0 0 20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin:14px 0}
+  label{display:block;font-weight:600;margin:0 0 6px}
+  input[type=file],textarea{width:100%;background:#0c1220;border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:10px;font:inherit}
+  textarea{min-height:80px;resize:vertical}
+  button{background:var(--accent);color:#03121f;border:0;border-radius:10px;padding:11px 16px;font-weight:700;cursor:pointer;margin-top:10px}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  button:disabled{opacity:.55;cursor:wait}
+  .out{white-space:pre-wrap;word-break:break-word;background:#0c1220;border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:10px;font-family:ui-monospace,Consolas,monospace;font-size:13px}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .dim{color:var(--dim)}
+  .note{font-size:13px;color:var(--dim)}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Luxor Net Key</h1>
+  <p class="sub">A secret picture is your encryption key. Invented by Christian Rivera (DJ BrightFuture).</p>
+
+  <div class="card">
+    <p class="note">This whole demo runs in your browser. Nothing is uploaded. Your picture never leaves this page.
+    Best key: a photo of your own <b>random pencil drawing</b> - unique, private, high-entropy.</p>
+  </div>
+
+  <div class="card">
+    <label>1. Your secret message</label>
+    <textarea id="msg" placeholder="Type something to protect...">My bank PIN is 4821 and the safe code is 77-14-09.</textarea>
+    <label style="margin-top:14px">2. Your secret picture (this is your key)</label>
+    <input id="picLock" type="file" accept="image/*">
+    <button id="lockBtn">Lock it</button>
+    <div id="lockOut" class="out dim">Locked envelope will appear here.</div>
+  </div>
+
+  <div class="card">
+    <label>3. Unlock: pick the SAME picture file again</label>
+    <input id="picUnlock" type="file" accept="image/*">
+    <button id="unlockBtn" class="ghost">Unlock</button>
+    <div id="unlockOut" class="out dim">Your message will appear here if the picture matches.</div>
+  </div>
+
+  <p class="note">Open source (MIT) &middot; <a href="../index.html">Luxor Net Technologies</a> &middot;
+    <a href="./README.md">How it works &amp; security notes</a></p>
+</div>
+
+<script type="module">
+  import { lockWithPicture, unlockWithPicture, readFileBytes } from "./luxor-net-key.js";
+  const $ = (id) => document.getElementById(id);
+  let envelope = null;
+
+  // Busy state: disable the button, swap its label, and let the UI paint
+  // before the heavy key-derivation work starts (no more dead clicks).
+  async function setBusy(btn, busy, busyLabel) {
+    if (busy) {
+      if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = busyLabel;
+      await new Promise((r) => setTimeout(r, 40)); // paint the busy state
+    } else {
+      btn.disabled = false;
+      if (btn.dataset.label) btn.textContent = btn.dataset.label;
+    }
+  }
+
+  const LOCK_PLACEHOLDER = "Locked envelope will appear here.";
+  const UNLOCK_PLACEHOLDER = "Your message will appear here if the picture matches.";
+
+  $("lockBtn").onclick = async () => {
+    const out = $("lockOut");
+    const btn = $("lockBtn");
+    try {
+      const f = $("picLock").files[0];
+      if (!f) { out.className = "out bad"; out.textContent = "Pick a picture first."; return; }
+      out.className = "out dim";
+      out.textContent = "Locking - turning your picture into a key (a few seconds)...";
+      await setBusy(btn, true, "Locking...");
+      const bytes = await readFileBytes(f);
+      envelope = await lockWithPicture($("msg").value, bytes);
+      // A fresh lock means any old unlock result/error no longer applies.
+      const uo = $("unlockOut");
+      uo.className = "out dim";
+      uo.textContent = UNLOCK_PLACEHOLDER;
+      out.className = "out ok";
+      out.textContent = "LOCKED. This is all that would be stored (pure ciphertext - no picture, no key):\n\n"
+        + JSON.stringify(envelope).slice(0, 420) + " ...";
+    } catch (e) { out.className = "out bad"; out.textContent = "Error: " + e.message; }
+    finally { await setBusy(btn, false); }
+  };
+
+  $("unlockBtn").onclick = async () => {
+    const out = $("unlockOut");
+    const btn = $("unlockBtn");
+    try {
+      if (!envelope) { out.className = "out bad"; out.textContent = "Lock a message first."; return; }
+      const f = $("picUnlock").files[0];
+      if (!f) { out.className = "out bad"; out.textContent = "Pick your secret picture."; return; }
+      out.className = "out dim";
+      out.textContent = "Unlocking - checking your picture (a few seconds)...";
+      await setBusy(btn, true, "Unlocking...");
+      const bytes = await readFileBytes(f);
+      const msg = await unlockWithPicture(envelope, bytes);
+      out.className = "out ok";
+      out.textContent = "UNLOCKED:\n\n" + msg;
+    } catch (e) {
+      out.className = "out bad";
+      out.textContent = "Wrong picture - it does not unlock. (Must be the exact same file you locked with.)";
+    } finally { await setBusy(btn, false); }
+  };
+</script>
+</body>
+</html>
